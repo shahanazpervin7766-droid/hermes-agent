@@ -1,60 +1,78 @@
 import os
-import asyncio
+import threading
+import requests
 import discord
-from fastapi import FastAPI
-from pydantic import BaseModel
-from openai import OpenAI
+from flask import Flask, request, jsonify
 
-app = FastAPI()
+app = Flask(__name__)
 
 # OpenRouter API Setup
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=os.getenv("OPENAI_API_KEY"),
-)
+OPENROUTER_API_KEY = os.getenv("OPENAI_API_KEY")
+DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
-class ChatRequest(BaseModel):
-    message: str
+def ask_openrouter(prompt):
+    try:
+        response = requests.post(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "nousresearch/hermes-3-llama-3.1-405b",
+                "messages": [{"role": "user", "content": prompt}]
+            }
+        )
+        data = response.json()
+        return data['choices'][0]['message']['content']
+    except Exception as e:
+        print(f"Error querying OpenRouter: {e}")
+        return "Sorry, I couldn't process that request."
 
-def get_ai_response(user_message: str) -> str:
-    response = client.chat.completions.create(
-        model="nousresearch/hermes-3-llama-3.1-405b",
-        messages=[{"role": "user", "content": user_message}]
-    )
-    return response.choices[0].message.content
+# Flask Route for API testing
+@app.route('/')
+def home():
+    return "Throda AI Agent is Running!"
 
-@app.post("/chat")
-def chat(request: ChatRequest):
-    ai_reply = get_ai_response(request.message)
-    return {"response": ai_reply}
+@app.route('/chat', methods=['POST'])
+def chat():
+    data = request.json or {}
+    user_message = data.get('message', '')
+    if not user_message:
+        return jsonify({"error": "No message provided"}), 400
+    
+    bot_response = ask_openrouter(user_message)
+    return jsonify({"response": bot_response})
 
-# --- DISCORD BOT BOT INTEGRATION ---
-discord_intents = discord.Intents.default()
-discord_intents.message_content = True
-discord_client = discord.Client(intents=discord_intents)
+# --- DISCORD BOT BOT SECTION ---
+intents = discord.Intents.default()
+intents.message_content = True
+client = discord.Client(intents=intents)
 
-@discord_client.event
+@client.event
 async def on_ready():
-    print(f'Discord Bot Ready: Logged in as {discord_client.user}')
+    print(f'✅ Discord Bot Ready! Logged in as {client.user}')
 
-@discord_client.event
+@client.event
 async def on_message(message):
-    if message.author == discord_client.user:
+    if message.author == client.user:
         return
 
-    # Process message via AI function
-    try:
-        loop = asyncio.get_event_loop()
-        reply = await loop.run_in_executor(None, get_ai_response, message.content)
-        await message.channel.send(reply)
-    except Exception as e:
-        print(f"Error: {e}")
-        await message.channel.send("Sorry, something went wrong processing that.")
+    # Reply in discord channel using OpenRouter API
+    response_text = ask_openrouter(message.content)
+    await message.channel.send(response_text)
 
-@app.on_event("startup")
-async def startup_event():
-    token = os.getenv("DISCORD_BOT_TOKEN")
-    if token:
-        asyncio.create_task(discord_client.start(token))
+def run_discord_bot():
+    if DISCORD_TOKEN:
+        client.run(DISCORD_TOKEN)
     else:
-        print("DISCORD_BOT_TOKEN environment variable not set.")
+        print("⚠️ DISCORD_BOT_TOKEN is not set in Environment Variables.")
+
+# Run Discord Bot in a background thread
+bot_thread = threading.Thread(target=run_discord_bot)
+bot_thread.daemon = True
+bot_thread.start()
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
