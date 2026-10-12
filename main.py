@@ -1,12 +1,12 @@
 import os
 import threading
 import requests
+import asyncio
 import discord
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# OpenRouter API Setup
 OPENROUTER_API_KEY = os.getenv("OPENAI_API_KEY")
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
@@ -29,22 +29,11 @@ def ask_openrouter(prompt):
         print(f"Error querying OpenRouter: {e}")
         return "Sorry, I couldn't process that request."
 
-# Flask Route for API testing
 @app.route('/')
 def home():
     return "Throda AI Agent is Running!"
 
-@app.route('/chat', methods=['POST'])
-def chat():
-    data = request.json or {}
-    user_message = data.get('message', '')
-    if not user_message:
-        return jsonify({"error": "No message provided"}), 400
-    
-    bot_response = ask_openrouter(user_message)
-    return jsonify({"response": bot_response})
-
-# --- DISCORD BOT BOT SECTION ---
+# --- DISCORD BOT SECTION ---
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
@@ -58,17 +47,23 @@ async def on_message(message):
     if message.author == client.user:
         return
 
-    # Reply in discord channel using OpenRouter API
     response_text = ask_openrouter(message.content)
     await message.channel.send(response_text)
 
 def run_discord_bot():
-    if DISCORD_TOKEN:
-        client.run(DISCORD_TOKEN)
-    else:
-        print("⚠️ DISCORD_BOT_TOKEN is not set in Environment Variables.")
+    if not DISCORD_TOKEN:
+        print("⚠️ DISCORD_BOT_TOKEN is missing!")
+        return
+    
+    # Create and set event loop for background thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(client.start(DISCORD_TOKEN))
+    except Exception as e:
+        print(f"❌ Discord Bot Error: {e}")
 
-# Run Discord Bot in a background thread
+# Start Discord Bot in Background Thread
 bot_thread = threading.Thread(target=run_discord_bot)
 bot_thread.daemon = True
 bot_thread.start()
