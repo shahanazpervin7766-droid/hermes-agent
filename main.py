@@ -1,32 +1,36 @@
+import discord
+import requests
 import os
-from flask import Flask, request, jsonify
-from openai import OpenAI
+import asyncio
 
-app = Flask(__name__)
+# Render API URL
+RENDER_API_URL = "https://hermes-agent-g3ch.onrender.com/chat"
 
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=os.getenv("OPENROUTER_API_KEY"),
-)
+# Discord Setup
+intents = discord.Intents.default()
+intents.message_content = True
+client = discord.Client(intents=intents)
 
-@app.route('/', methods=['GET'])
-def home():
-    return "Hermes AI Agent is Live!"
+@client.event
+async def on_ready():
+    print(f'Logged in as {client.user}')
 
-@app.route('/chat', methods=['POST'])
-def chat():
-    data = request.json
-    user_message = data.get("message", "")
+@client.event
+async def on_message(message):
+    if message.author == client.user:
+        return
 
-    response = client.chat.completions.create(
-        model="nousresearch/hermes-3-llama-3.1-405b",
-        messages=[
-            {"role": "system", "content": "You are Throda, a trading and market analysis assistant."},
-            {"role": "user", "content": user_message}
-        ]
-    )
+    try:
+        response = requests.post(RENDER_API_URL, json={"message": message.content})
+        if response.status_code == 200:
+            reply_text = response.json().get("response", "No response received.")
+            await message.channel.send(reply_text)
+        else:
+            await message.channel.send("Error processing request.")
+    except Exception as e:
+        await message.channel.send("Failed to connect to AI server.")
 
-    return jsonify({"reply": response.choices[0].message.content})
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+# Run Discord Bot
+DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+if DISCORD_TOKEN:
+    client.run(DISCORD_TOKEN)
