@@ -4,4 +4,4 @@ openai
 requests
 discord.py
 flask
-pip install gunicorn
+gunicorn
