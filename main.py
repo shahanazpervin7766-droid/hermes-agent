@@ -1,36 +1,60 @@
-import discord
-import requests
 import os
 import asyncio
+import discord
+from fastapi import FastAPI
+from pydantic import BaseModel
+from openai import OpenAI
 
-# Render API URL
-RENDER_API_URL = "https://hermes-agent-g3ch.onrender.com/chat"
+app = FastAPI()
 
-# Discord Setup
-intents = discord.Intents.default()
-intents.message_content = True
-client = discord.Client(intents=intents)
+# OpenRouter API Setup
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENAI_API_KEY"),
+)
 
-@client.event
+class ChatRequest(BaseModel):
+    message: str
+
+def get_ai_response(user_message: str) -> str:
+    response = client.chat.completions.create(
+        model="nousresearch/hermes-3-llama-3.1-405b",
+        messages=[{"role": "user", "content": user_message}]
+    )
+    return response.choices[0].message.content
+
+@app.post("/chat")
+def chat(request: ChatRequest):
+    ai_reply = get_ai_response(request.message)
+    return {"response": ai_reply}
+
+# --- DISCORD BOT BOT INTEGRATION ---
+discord_intents = discord.Intents.default()
+discord_intents.message_content = True
+discord_client = discord.Client(intents=discord_intents)
+
+@discord_client.event
 async def on_ready():
-    print(f'Logged in as {client.user}')
+    print(f'Discord Bot Ready: Logged in as {discord_client.user}')
 
-@client.event
+@discord_client.event
 async def on_message(message):
-    if message.author == client.user:
+    if message.author == discord_client.user:
         return
 
+    # Process message via AI function
     try:
-        response = requests.post(RENDER_API_URL, json={"message": message.content})
-        if response.status_code == 200:
-            reply_text = response.json().get("response", "No response received.")
-            await message.channel.send(reply_text)
-        else:
-            await message.channel.send("Error processing request.")
+        loop = asyncio.get_event_loop()
+        reply = await loop.run_in_executor(None, get_ai_response, message.content)
+        await message.channel.send(reply)
     except Exception as e:
-        await message.channel.send("Failed to connect to AI server.")
+        print(f"Error: {e}")
+        await message.channel.send("Sorry, something went wrong processing that.")
 
-# Run Discord Bot
-DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-if DISCORD_TOKEN:
-    client.run(DISCORD_TOKEN)
+@app.on_event("startup")
+async def startup_event():
+    token = os.getenv("DISCORD_BOT_TOKEN")
+    if token:
+        asyncio.create_task(discord_client.start(token))
+    else:
+        print("DISCORD_BOT_TOKEN environment variable not set.")
