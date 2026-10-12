@@ -1,4 +1,5 @@
-flask
-requests
+fastapi
+uvicorn
 openai
+requests
 discord.py
